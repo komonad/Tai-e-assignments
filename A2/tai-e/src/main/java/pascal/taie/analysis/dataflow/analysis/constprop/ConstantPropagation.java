@@ -26,16 +26,11 @@ import pascal.taie.analysis.dataflow.analysis.AbstractDataflowAnalysis;
 import pascal.taie.analysis.graph.cfg.CFG;
 import pascal.taie.config.AnalysisConfig;
 import pascal.taie.ir.IR;
-import pascal.taie.ir.exp.ArithmeticExp;
-import pascal.taie.ir.exp.BinaryExp;
-import pascal.taie.ir.exp.BitwiseExp;
-import pascal.taie.ir.exp.ConditionExp;
-import pascal.taie.ir.exp.Exp;
-import pascal.taie.ir.exp.IntLiteral;
-import pascal.taie.ir.exp.ShiftExp;
-import pascal.taie.ir.exp.Var;
+import pascal.taie.ir.exp.*;
+import pascal.taie.ir.stmt.Binary;
 import pascal.taie.ir.stmt.DefinitionStmt;
 import pascal.taie.ir.stmt.Stmt;
+import pascal.taie.ir.stmt.StmtVisitor;
 import pascal.taie.language.type.PrimitiveType;
 import pascal.taie.language.type.Type;
 import pascal.taie.util.AnalysisException;
@@ -56,31 +51,52 @@ public class ConstantPropagation extends
 
     @Override
     public CPFact newBoundaryFact(CFG<Stmt> cfg) {
-        // TODO - finish me
-        return null;
+        var result = new CPFact();
+        for (var v: cfg.getIR().getParams()) {
+            if (canHoldInt(v)) {
+                result.update(v, Value.getNAC());
+            }
+        }
+        return result;
     }
 
     @Override
     public CPFact newInitialFact() {
-        // TODO - finish me
-        return null;
+        return new CPFact();
     }
 
     @Override
     public void meetInto(CPFact fact, CPFact target) {
-        // TODO - finish me
+        fact.entries().forEach(x -> {
+            target.update(x.getKey(), x.getValue());
+        });
     }
 
     /**
      * Meets two Values.
      */
     public Value meetValue(Value v1, Value v2) {
-        // TODO - finish me
-        return null;
+        if (v1.isNAC() || v2.isNAC()) return Value.getNAC();
+        if (v1.isUndef()) return v2;
+        if (v2.isUndef()) return v1;
+        if (v1.getConstant() != v2.getConstant()) return Value.getNAC();
+        return v1;
     }
 
     @Override
     public boolean transferNode(Stmt stmt, CPFact in, CPFact out) {
+        stmt.accept(new StmtVisitor<Boolean>() {
+            @Override
+            public Boolean visit(Binary stmt) {
+                var lvalue = stmt.getLValue();
+                if (!canHoldInt(lvalue)) {
+                    return false;
+                }
+                var rvalue = stmt.getRValue();
+                var res = evaluate(rvalue, in);
+                return out.update(lvalue, res);
+            }
+        });
         // TODO - finish me
         return false;
     }
@@ -111,7 +127,8 @@ public class ConstantPropagation extends
      * @return the resulting {@link Value}
      */
     public static Value evaluate(Exp exp, CPFact in) {
-        // TODO - finish me
+        exp.accept(new ExpVisitor<Value>() {
+        })
         return null;
     }
 }
