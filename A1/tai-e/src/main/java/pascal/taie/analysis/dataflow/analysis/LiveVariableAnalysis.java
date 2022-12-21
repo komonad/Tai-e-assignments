@@ -63,8 +63,7 @@ public class LiveVariableAnalysis extends
     @Override
     public boolean transferNode(Stmt stmt, SetFact<Var> in, SetFact<Var> out) {
         SetFact<Var> cur = out;
-        if (stmt.getDef().isPresent() && stmt.getDef().get() instanceof Var) {
-            var v = (Var)stmt.getDef().get();
+        if (stmt.getDef().isPresent() && stmt.getDef().get() instanceof Var v) {
             cur = out.copy();
             cur.remove(v);
         }
