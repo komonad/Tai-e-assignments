@@ -22,6 +22,8 @@
 
 package pascal.taie.analysis.dataflow.solver;
 
+import java.util.LinkedList;
+
 import pascal.taie.analysis.dataflow.analysis.DataflowAnalysis;
 import pascal.taie.analysis.dataflow.fact.DataflowResult;
 import pascal.taie.analysis.graph.cfg.CFG;
@@ -77,11 +79,25 @@ public abstract class Solver<Node, Fact> {
     }
 
     protected void initializeForward(CFG<Node> cfg, DataflowResult<Node, Fact> result) {
-        // TODO - finish me
+        result.setInFact(cfg.getEntry(), analysis.newInitialFact());
+        result.setOutFact(cfg.getEntry(), analysis.newBoundaryFact(cfg));
+
+        for (Node n: cfg) {
+            if (cfg.isEntry(n)) continue;
+            result.setOutFact(n, analysis.newInitialFact());
+            result.setInFact(n, analysis.newInitialFact());
+        }
     }
 
     protected void initializeBackward(CFG<Node> cfg, DataflowResult<Node, Fact> result) {
-        // TODO - finish me
+        result.setInFact(cfg.getExit(), analysis.newBoundaryFact(cfg));
+        result.setOutFact(cfg.getExit(), analysis.newBoundaryFact(cfg));
+
+        for (Node n: cfg) {
+            if (cfg.isEntry(n)) continue;
+            result.setInFact(n, analysis.newInitialFact());
+            result.setOutFact(n, analysis.newInitialFact());
+        }
     }
 
     /**
