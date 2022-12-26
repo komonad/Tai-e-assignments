@@ -45,9 +45,8 @@ import pascal.taie.ir.stmt.If;
 import pascal.taie.ir.stmt.Stmt;
 import pascal.taie.ir.stmt.SwitchStmt;
 
-import java.util.Comparator;
-import java.util.Set;
-import java.util.TreeSet;
+import java.util.*;
+import java.util.function.Consumer;
 
 public class DeadCodeDetection extends MethodAnalysis {
 
@@ -69,8 +68,78 @@ public class DeadCodeDetection extends MethodAnalysis {
                 ir.getResult(LiveVariableAnalysis.ID);
         // keep statements (dead code) sorted in the resulting set
         Set<Stmt> deadCode = new TreeSet<>(Comparator.comparing(Stmt::getIndex));
-        // TODO - finish me
         // Your task is to recognize dead code in ir and add it to deadCode
+
+        // 1. Control flow unreachable statements
+        Set<Stmt> reachableStmts = new TreeSet<>(Comparator.comparing(Stmt::getIndex));
+
+        var q = new LinkedList<Stmt>();
+        q.push(cfg.getEntry());
+
+        Consumer<Stmt> push = (x) -> {
+            if (!reachableStmts.contains(x)) {
+                q.push(x);
+            }
+        };
+
+        while (!q.isEmpty()) {
+            var cur = q.pollFirst();
+            if (reachableStmts.contains(cur)) continue;
+            reachableStmts.add(cur);
+            if (cur instanceof If ifStmt) {
+                var res = ConstantPropagation.evaluate(ifStmt.getCondition(), constants.getOutFact(cur));
+                if (res.isConstant() && res.getConstant() == 1) {
+                    cfg.getOutEdgesOf(cur).stream().filter(x -> x.getKind() == Edge.Kind.IF_TRUE)
+                            .forEach(x -> push.accept(x.getTarget()));
+                } else if (res.isConstant() && res.getConstant() == 0) {
+                    cfg.getOutEdgesOf(cur).stream().filter(x -> x.getKind() == Edge.Kind.IF_FALSE)
+                            .forEach(x -> push.accept(x.getTarget()));
+                } else {
+                    for (var out: cfg.getSuccsOf(cur)) {
+                        push.accept(out);
+                    }
+                }
+            } else if (cur instanceof SwitchStmt switchStmt) {
+                var res = ConstantPropagation.evaluate(switchStmt.getVar(), constants.getOutFact(cur));
+                if (res.isConstant()) {
+                    var value = res.getConstant();
+                    var casePair = switchStmt.getCaseTargets().stream()
+                            .filter(x -> x.first() == value).findFirst();
+                    if (casePair.isPresent()) {
+                        push.accept(casePair.get().second());
+                    } else {
+                        push.accept(switchStmt.getDefaultTarget());
+                    }
+                    continue;
+                }
+                for (var out: cfg.getSuccsOf(cur)) {
+                    push.accept(out);
+                }
+            } else {
+                for (var out: cfg.getSuccsOf(cur)) {
+                    push.accept(out);
+                }
+            }
+        }
+
+        for (var stmt: cfg.getNodes()) {
+            if (!reachableStmts.contains(stmt)) {
+                deadCode.add(stmt);
+            }
+        }
+
+        // 2. Useless assignments
+
+        for (var stmt: cfg.getNodes()) {
+            if (stmt instanceof AssignStmt ass && ass.getLValue() instanceof Var v) {
+                if (!liveVars.getOutFact(stmt).contains(v) && hasNoSideEffect(ass.getRValue())) {
+                    deadCode.add(stmt);
+                }
+            }
+        }
+
+        deadCode.remove(cfg.getExit());
+
         return deadCode;
     }
 

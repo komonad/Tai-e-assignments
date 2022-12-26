@@ -94,7 +94,7 @@ public abstract class Solver<Node, Fact> {
         result.setOutFact(cfg.getExit(), analysis.newBoundaryFact(cfg));
 
         for (Node n: cfg) {
-            if (cfg.isEntry(n)) continue;
+            if (cfg.isExit(n)) continue;
             result.setInFact(n, analysis.newInitialFact());
             result.setOutFact(n, analysis.newInitialFact());
         }
