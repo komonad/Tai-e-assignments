@@ -30,9 +30,7 @@ import pascal.taie.language.classes.JClass;
 import pascal.taie.language.classes.JMethod;
 import pascal.taie.language.classes.Subsignature;
 
-import java.util.ArrayDeque;
-import java.util.Queue;
-import java.util.Set;
+import java.util.*;
 
 /**
  * Implementation of the CHA algorithm.
@@ -50,7 +48,42 @@ class CHABuilder implements CGBuilder<Invoke, JMethod> {
     private CallGraph<Invoke, JMethod> buildCallGraph(JMethod entry) {
         DefaultCallGraph callGraph = new DefaultCallGraph();
         callGraph.addEntryMethod(entry);
-        // TODO - finish me
+
+        var reachableMethods = new HashSet<JMethod>();
+        var workList = new LinkedList<JMethod>();
+        workList.push(entry);
+
+        while (!workList.isEmpty()) {
+            var cur = workList.pollFirst();
+            if (reachableMethods.contains(cur)) continue;
+            reachableMethods.add(cur);
+            callGraph.addReachableMethod(cur);
+            if (cur.isAbstract()) continue;
+            cur.getIR().getStmts().stream().filter(x -> x instanceof Invoke)
+                    .forEach(x -> {
+                        var i = (Invoke) x;
+                        CallKind kind;
+                        if (i.isVirtual()) {
+                            kind = CallKind.VIRTUAL;
+                        } else if (i.isSpecial()) {
+                            kind = CallKind.SPECIAL;
+                        } else if (i.isDynamic()) {
+                            kind = CallKind.DYNAMIC;
+                        } else if (i.isStatic()) {
+                            kind = CallKind.STATIC;
+                        } else if (i.isInterface()) {
+                            kind = CallKind.INTERFACE;
+                        } else {
+                            kind = CallKind.OTHER;
+                        }
+                        var targets = resolve(i);
+                        for (var target: targets) {
+                            callGraph.addEdge(new Edge<>(kind, i, target));
+                            workList.add(target);
+                        }
+                    });
+        }
+
         return callGraph;
     }
 
@@ -58,8 +91,44 @@ class CHABuilder implements CGBuilder<Invoke, JMethod> {
      * Resolves call targets (callees) of a call site via CHA.
      */
     private Set<JMethod> resolve(Invoke callSite) {
-        // TODO - finish me
-        return null;
+        var methodRef = callSite.getMethodRef();
+        if (callSite.isStatic()) {
+            var klass = methodRef.getDeclaringClass();
+            if (klass == null) {
+                return Set.of();
+            }
+            var method = klass.getDeclaredMethod(methodRef.getSubsignature());
+            if (method != null) {
+                return Set.of(method);
+            } else {
+                return Set.of();
+            }
+        }
+        if (callSite.isSpecial()) {
+            var klass = methodRef.getDeclaringClass();
+            return Set.of(dispatch(klass, methodRef.getSubsignature()));
+        }
+        if (callSite.isVirtual() || callSite.isInterface()) {
+            var declClass = methodRef.getDeclaringClass();
+            var sig = methodRef.getSubsignature();
+            var res = new HashSet<JMethod>();
+
+            var q = new LinkedList<JClass>();
+            q.push(declClass);
+
+            while (!q.isEmpty()) {
+                var cur = q.pollFirst();
+                var method = dispatch(cur, sig);
+                if (method != null) {
+                    res.add(method);
+                }
+                q.addAll(hierarchy.getDirectSubclassesOf(cur));
+                q.addAll(hierarchy.getDirectImplementorsOf(cur));
+                q.addAll(hierarchy.getDirectSubinterfacesOf(cur));
+            }
+            return res;
+        }
+        return Set.of();
     }
 
     /**
@@ -69,7 +138,11 @@ class CHABuilder implements CGBuilder<Invoke, JMethod> {
      * can be found.
      */
     private JMethod dispatch(JClass jclass, Subsignature subsignature) {
-        // TODO - finish me
-        return null;
+        if (jclass == null || subsignature == null) return null;
+        var res = jclass.getDeclaredMethod(subsignature);
+        if (res != null && !res.isAbstract()) {
+            return res;
+        }
+        return dispatch(jclass.getSuperClass(), subsignature);
     }
 }
