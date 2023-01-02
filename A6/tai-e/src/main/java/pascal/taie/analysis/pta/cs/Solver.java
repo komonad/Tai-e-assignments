@@ -116,6 +116,7 @@ class Solver {
             return;
         }
         reachableMethods.add(csMethod);
+        callGraph.addReachableMethod(csMethod);
         var context = csMethod.getContext();
         var method = csMethod.getMethod();
         method.getIR().stmts().forEach(reachableStmts::add);
@@ -133,8 +134,8 @@ class Solver {
             @Override
             public Object visit(Copy stmt) {
                 addPFGEdge(
-                        csManager.getCSVar(context, stmt.getLValue()),
-                        csManager.getCSVar(context, stmt.getRValue())
+                        csManager.getCSVar(context, stmt.getRValue()),
+                        csManager.getCSVar(context, stmt.getLValue())
                 );
                 return null;
             }
@@ -160,7 +161,7 @@ class Solver {
             @Override
             public Object visit(Invoke stmt) {
                 if (stmt.isStatic()) {
-                    var method = stmt.getMethodRef().resolve();
+                    var method = resolveCallee(null, stmt);
                     addReachable(csManager.getCSMethod(context, method));
                     var newContext = contextSelector.selectContext(
                             csManager.getCSCallSite(context, stmt), method
@@ -178,21 +179,6 @@ class Solver {
                 return null;
             }
         }));
-    }
-
-    /**
-     * Processes the statements in context-sensitive new reachable methods.
-     */
-    private class StmtProcessor implements StmtVisitor<Void> {
-
-        private final CSMethod csMethod;
-
-        private final Context context;
-
-        private StmtProcessor(CSMethod csMethod) {
-            this.csMethod = csMethod;
-            this.context = csMethod.getContext();
-        }
     }
 
     /**
@@ -260,8 +246,10 @@ class Solver {
                 delta.addObject(obj);
             }
         }
-        pointer.getPointsToSet().addAll(delta);
-        pointerFlowGraph.getSuccsOf(pointer).forEach(succ -> workList.addEntry(succ, delta));
+        if (!delta.isEmpty()) {
+            pointer.getPointsToSet().addAll(delta);
+            pointerFlowGraph.getSuccsOf(pointer).forEach(succ -> workList.addEntry(succ, delta));
+        }
         return delta;
     }
 
@@ -291,10 +279,13 @@ class Solver {
      */
     private void processCall(CSVar recv, CSObj recvObj) {
         for (var invoke: recv.getVar().getInvokes()) {
-            if (reachableStmts.contains(invoke)) {
+            if (!reachableStmts.contains(invoke) || invoke.isStatic()) {
                 continue;
             }
-            var method = invoke.getMethodRef().resolve();
+            var method = resolveCallee(recvObj, invoke);
+            if (method.isAbstract()) {
+                continue;
+            }
             var context = contextSelector.selectContext(
                     csManager.getCSCallSite(recv.getContext(), invoke),
                     recvObj,
