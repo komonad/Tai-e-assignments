@@ -42,28 +42,12 @@ public class _1CallSelector implements ContextSelector {
 
     @Override
     public Context selectContext(CSCallSite callSite, JMethod callee) {
-        return new Context() {
-            @Override
-            public int getLength() { return 1; }
-
-            @Override
-            public Object getElementAt(int i) {
-                return callSite.getCallSite();
-            }
-        };
+        return ListContext.make(callSite.getCallSite());
     }
 
     @Override
     public Context selectContext(CSCallSite callSite, CSObj recv, JMethod callee) {
-        return new Context() {
-            @Override
-            public int getLength() { return 1; }
-
-            @Override
-            public Object getElementAt(int i) {
-                return callSite.getCallSite();
-            }
-        };
+        return ListContext.make(callSite.getCallSite());
     }
 
     @Override

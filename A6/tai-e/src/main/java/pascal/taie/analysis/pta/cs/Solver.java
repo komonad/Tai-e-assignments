@@ -162,10 +162,10 @@ class Solver {
             public Object visit(Invoke stmt) {
                 if (stmt.isStatic()) {
                     var method = resolveCallee(null, stmt);
-                    addReachable(csManager.getCSMethod(context, method));
                     var newContext = contextSelector.selectContext(
                             csManager.getCSCallSite(context, stmt), method
                     );
+                    addReachable(csManager.getCSMethod(newContext, method));
                     var argCount = stmt.getInvokeExp().getArgCount();
                     for (int i = 0; i < argCount; i++) {
                         addPFGEdge(csManager.getCSVar(context, stmt.getInvokeExp().getArg(i)),

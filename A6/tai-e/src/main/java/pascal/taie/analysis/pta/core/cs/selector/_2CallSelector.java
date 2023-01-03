@@ -63,7 +63,7 @@ public class _2CallSelector implements ContextSelector {
         if (method.getContext().getLength() < 1) {
             return ListContext.make();
         } else {
-            return ListContext.make(method.getContext().getElementAt(1));
+            return ListContext.make(method.getContext().getElementAt(method.getContext().getLength() - 1));
         }
     }
 }
