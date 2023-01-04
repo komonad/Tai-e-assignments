@@ -22,10 +22,13 @@
 
 package pascal.taie.analysis.dataflow.inter;
 
+import java.util.HashMap;
+import java.util.Map;
+
 import pascal.taie.World;
 import pascal.taie.analysis.dataflow.analysis.constprop.CPFact;
 import pascal.taie.analysis.dataflow.analysis.constprop.ConstantPropagation;
-import pascal.taie.analysis.graph.cfg.CFG;
+import pascal.taie.analysis.dataflow.analysis.constprop.Value;
 import pascal.taie.analysis.graph.cfg.CFGBuilder;
 import pascal.taie.analysis.graph.icfg.CallEdge;
 import pascal.taie.analysis.graph.icfg.CallToReturnEdge;
@@ -34,10 +37,15 @@ import pascal.taie.analysis.graph.icfg.ReturnEdge;
 import pascal.taie.analysis.pta.PointerAnalysisResult;
 import pascal.taie.config.AnalysisConfig;
 import pascal.taie.ir.IR;
-import pascal.taie.ir.exp.InvokeExp;
+import pascal.taie.ir.exp.InstanceFieldAccess;
+import pascal.taie.ir.exp.StaticFieldAccess;
 import pascal.taie.ir.exp.Var;
 import pascal.taie.ir.stmt.Invoke;
+import pascal.taie.ir.stmt.LoadArray;
+import pascal.taie.ir.stmt.LoadField;
 import pascal.taie.ir.stmt.Stmt;
+import pascal.taie.ir.stmt.StoreField;
+import pascal.taie.language.classes.JField;
 import pascal.taie.language.classes.JMethod;
 
 /**
@@ -50,16 +58,24 @@ public class InterConstantPropagation extends
 
     private final ConstantPropagation cp;
 
+    private final HashMap<JField, Value> staticField;
+    private final Map<Var, Map<JField, Value>> instanceFields;
+    private final Map<Var, Map<Integer, Value>> arrayAccess;
+
+    private PointerAnalysisResult pta;
+
     public InterConstantPropagation(AnalysisConfig config) {
         super(config);
         cp = new ConstantPropagation(new AnalysisConfig(ConstantPropagation.ID));
+        staticField = new HashMap<>();
+        instanceFields = new HashMap<>();
+        arrayAccess = new HashMap<>();
     }
 
     @Override
     protected void initialize() {
         String ptaId = getOptions().getString("pta");
-        PointerAnalysisResult pta = World.get().getResult(ptaId);
-        // You can do initialization work here
+        pta = World.get().getResult(ptaId);
     }
 
     @Override
@@ -85,37 +101,128 @@ public class InterConstantPropagation extends
 
     @Override
     protected boolean transferCallNode(Stmt stmt, CPFact in, CPFact out) {
-        // TODO - finish me
-        return false;
+//        var oldOut = out.copy();
+        out.clear();
+        out.copyFrom(in);
+        return true;
     }
 
     @Override
     protected boolean transferNonCallNode(Stmt stmt, CPFact in, CPFact out) {
-        // TODO - finish me
-        return false;
+        if (stmt instanceof LoadField loadField &&
+            ConstantPropagation.canHoldInt(loadField.getLValue()) &&
+            loadField.getRValue() instanceof InstanceFieldAccess ifa) {
+            var field = ifa.getFieldRef().resolve();
+            var pointsTo = pta.getPointsToSet(ifa.getBase(), ifa.getFieldRef().resolve());
+            var value = pta.getVars().stream()
+                .filter(v -> pta.getPointsToSet(v).stream().anyMatch(pointsTo::contains))
+                .map(v -> instanceFields.computeIfAbsent(v, k -> new HashMap<>())
+                    .computeIfAbsent(field, k -> Value.getUndef())
+                )
+                .reduce(Value.getUndef(), cp::meetValue);
+            var oldOut = out.copy();
+            out.copyFrom(in);
+            out.update(loadField.getLValue(), value);
+            return !out.equals(oldOut);
+        } else if (stmt instanceof LoadField loadField &&
+            ConstantPropagation.canHoldInt(loadField.getLValue()) &&
+            loadField.getRValue() instanceof StaticFieldAccess sfa) {
+            var value = staticField.get(loadField.getFieldRef().resolve());
+            if (value == null) {
+                value = Value.getUndef();
+            }
+            var oldOut = out.copy();
+            out.copyFrom(in);
+            out.update(loadField.getLValue(), value);
+            return !out.equals(oldOut);
+        } else if (stmt instanceof LoadArray loadArray &&
+            ConstantPropagation.canHoldInt(loadArray.getLValue())) {
+            var pointsTo = pta.getPointsToSet(loadArray.getRValue().getBase());
+            var idx = ConstantPropagation.evaluate(loadArray.getRValue().getIndex(), in);
+            var value = pta.getVars().stream()
+                .filter(v -> pta.getPointsToSet(v).stream().anyMatch(pointsTo::contains))
+                .flatMap(v -> v.getStoreArrays().stream())
+                .filter(v -> {
+                    var targetIdx = ConstantPropagation.evaluate(v.getLValue().getIndex(), in);
+                    if (targetIdx.isUndef() || idx.isUndef()) return false;
+                    if (targetIdx.isNAC() || idx.isNAC()) return true;
+                    return targetIdx.getConstant() == idx.getConstant();
+                })
+                .map(v -> ConstantPropagation.evaluate(v.getRValue(), in))
+                .reduce(Value.getUndef(), cp::meetValue);
+            var oldOut = out.copy();
+            out.copyFrom(in);
+            out.update(loadArray.getLValue(), value);
+            return !out.equals(oldOut);
+        } else if (stmt instanceof StoreField storeField && storeField.isStatic()) {
+            var field = storeField.getFieldRef().resolve();
+            var old = staticField.computeIfAbsent(field, k -> Value.getUndef());
+            var value = ConstantPropagation.evaluate(storeField.getRValue(), in);
+            var newValue = cp.meetValue(value, old);
+            staticField.put(field, newValue);
+            var oldOut = out.copy();
+            out.copyFrom(in);
+            return !old.equals(newValue) || !oldOut.equals(out);
+        } else if (stmt instanceof StoreField storeField &&
+            storeField.getFieldAccess() instanceof InstanceFieldAccess ifa) {
+            var obj = ifa.getBase();
+            var field = ifa.getFieldRef().resolve();
+            var varMap = instanceFields.computeIfAbsent(obj, k -> new HashMap<>());
+            var oldValue = varMap.get(field);
+            if (oldValue == null) {
+                oldValue = Value.getUndef();
+            }
+            var value = ConstantPropagation.evaluate(storeField.getRValue(), in);
+            var newValue = cp.meetValue(value, oldValue);
+            varMap.put(field, newValue);
+            var oldOut = out.copy();
+            out.copyFrom(in);
+            return !oldValue.equals(newValue) || !oldOut.equals(out);
+        }
+        return cp.transferNode(stmt, in, out);
     }
 
     @Override
     protected CPFact transferNormalEdge(NormalEdge<Stmt> edge, CPFact out) {
-        // TODO - finish me
-        return null;
+        return out;
     }
 
     @Override
     protected CPFact transferCallToReturnEdge(CallToReturnEdge<Stmt> edge, CPFact out) {
-        // TODO - finish me
-        return null;
+        CPFact fact = out.copy();
+        var stmt = edge.getSource();
+        if (stmt instanceof Invoke i && i.getLValue() != null) {
+            fact.remove(i.getLValue());
+        }
+        return fact;
     }
 
     @Override
     protected CPFact transferCallEdge(CallEdge<Stmt> edge, CPFact callSiteOut) {
-        // TODO - finish me
-        return null;
+        var newFact = cp.newInitialFact();
+
+        var source = edge.getSource();
+        var invoke = (Invoke) source;
+        var method = edge.getCallee();
+
+        for (int i = 0; i < invoke.getRValue().getArgs().size(); i++) {
+            newFact.update(method.getIR().getParam(i), callSiteOut.get(invoke.getRValue().getArg(i)));
+        }
+
+        return newFact;
     }
 
     @Override
     protected CPFact transferReturnEdge(ReturnEdge<Stmt> edge, CPFact returnOut) {
-        // TODO - finish me
-        return null;
+        var newFact = cp.newInitialFact();
+        var invoke = (Invoke)edge.getCallSite();
+
+        var v = invoke.getLValue();
+        if (v != null) {
+            var res = edge.getReturnVars().stream().map(returnOut::get)
+                .reduce(Value.getUndef(), cp::meetValue);
+            newFact.update(v, res);
+        }
+        return newFact;
     }
 }

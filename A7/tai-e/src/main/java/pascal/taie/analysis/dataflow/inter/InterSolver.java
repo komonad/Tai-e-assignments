@@ -26,6 +26,8 @@ import pascal.taie.analysis.dataflow.fact.DataflowResult;
 import pascal.taie.analysis.graph.icfg.ICFG;
 import pascal.taie.util.collection.SetQueue;
 
+import java.util.HashSet;
+import java.util.LinkedList;
 import java.util.Queue;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -48,6 +50,7 @@ class InterSolver<Method, Node, Fact> {
     InterSolver(InterDataflowAnalysis<Node, Fact> analysis,
                 ICFG<Method, Node> icfg) {
         this.analysis = analysis;
+        assert analysis.isForward(); // TODO: maybe we should support backward analysis?
         this.icfg = icfg;
     }
 
@@ -59,10 +62,35 @@ class InterSolver<Method, Node, Fact> {
     }
 
     private void initialize() {
-        // TODO - finish me
+        for (var node: icfg.getNodes()) {
+            result.setInFact(node, analysis.newInitialFact());
+            result.setOutFact(node, analysis.newInitialFact());
+        }
+        icfg.entryMethods().forEach(x -> {
+            var node = icfg.getEntryOf(x);
+            result.setInFact(node, analysis.newBoundaryFact(node));
+            result.setOutFact(node, analysis.newBoundaryFact(node));
+        });
     }
 
     private void doSolve() {
-        // TODO - finish me
+        workList = new LinkedList<>();
+        icfg.forEach(workList::add);
+
+        while (!workList.isEmpty()) {
+            var cur = workList.poll();
+            var in = analysis.newInitialFact();
+            var out = result.getOutFact(cur);
+            for (var inEdge: icfg.getInEdgesOf(cur)) {
+                var newResult = analysis.transferEdge(inEdge, result.getOutFact(inEdge.getSource()));
+                analysis.meetInto(newResult, in);
+            }
+            result.setInFact(cur, in);
+            if (analysis.transferNode(cur, in, out)) {
+                workList.addAll(icfg.getSuccsOf(cur));
+            } else {
+                int a = 123;
+            }
+        }
     }
 }
