@@ -102,53 +102,55 @@ public class TaintAnalysiss {
     public void taintTransfer(Context context, Invoke invoke, CSVar recv, JMethod method) {
         config.getTransfers().stream().filter(x -> x.method().equals(method))
             .forEach(transfer -> {
-                if (transfer.from() == TaintTransfer.BASE && transfer.to() == TaintTransfer.RESULT) {
-                    recv.getPointsToSet().forEach(x -> {
-                        if (manager.isTaint(x.getObject())) {
-                            solver.addToWorkList(csManager.getCSVar(context, invoke.getLValue()),
-                                PointsToSetFactory.make(csManager.getCSObj(emptyContext,
-                                    manager.makeTaint(manager.getSourceCall(x.getObject()), transfer.type()))));
-                        }
-                    });
-                }
-                if (transfer.to() == TaintTransfer.BASE && transfer.from() >= 0) {
-                    csManager.getCSVar(context, invoke.getInvokeExp().getArg(transfer.from()))
-                        .getPointsToSet().forEach(x -> {
-                            if (manager.isTaint(x.getObject())) {
-                                solver.addToWorkList(recv, PointsToSetFactory.make(csManager.getCSObj(emptyContext,
-                                    manager.makeTaint(manager.getSourceCall(x.getObject()), transfer.type()))));
-                            }
-                        });
-                }
-                if (transfer.to() == TaintTransfer.RESULT && transfer.from() >= 0) {
-                    csManager.getCSVar(context, invoke.getInvokeExp().getArg(transfer.from()))
-                        .getPointsToSet().forEach(x -> {
-                            if (manager.isTaint(x.getObject())) {
-                                solver.addToWorkList(csManager.getCSVar(context, invoke.getLValue()),
-                                    PointsToSetFactory.make(csManager.getCSObj(emptyContext, manager.makeTaint(
-                                        manager.getSourceCall(x.getObject()), transfer.type())))
-                                );
-                            }
-                        });
-                }
+                baseToResult(context, invoke, recv, transfer);
+                argToBase(context, invoke, recv, transfer);
+                argToResult(context, invoke, transfer);
             });
     }
 
     public void taintTransfer(Context context, Invoke invoke, JMethod method) {
         config.getTransfers().stream().filter(x -> x.method().equals(method))
-            .forEach(transfer -> {
-                if (transfer.to() == TaintTransfer.RESULT && transfer.from() >= 0) {
-                    csManager.getCSVar(context, invoke.getInvokeExp().getArg(transfer.from()))
-                        .getPointsToSet().forEach(x -> {
-                            if (manager.isTaint(x.getObject())) {
-                                solver.addToWorkList(csManager.getCSVar(context, invoke.getLValue()),
-                                    PointsToSetFactory.make(csManager.getCSObj(emptyContext, manager.makeTaint(
-                                        manager.getSourceCall(x.getObject()), transfer.type())))
-                                );
-                            }
-                        });
+                .forEach(transfer -> {
+                    argToResult(context, invoke, transfer);
+                });
+    }
+
+    private void baseToResult(Context context, Invoke invoke, CSVar recv, TaintTransfer transfer) {
+        if (transfer.from() == TaintTransfer.BASE && transfer.to() == TaintTransfer.RESULT) {
+            recv.getPointsToSet().forEach(x -> {
+                if (manager.isTaint(x.getObject())) {
+                    solver.addToWorkList(csManager.getCSVar(context, invoke.getLValue()),
+                        PointsToSetFactory.make(csManager.getCSObj(emptyContext,
+                            manager.makeTaint(manager.getSourceCall(x.getObject()), transfer.type()))));
                 }
             });
+        }
+    }
+
+    private void argToBase(Context context, Invoke invoke, CSVar recv, TaintTransfer transfer) {
+        if (transfer.to() == TaintTransfer.BASE && transfer.from() >= 0) {
+            csManager.getCSVar(context, invoke.getInvokeExp().getArg(transfer.from()))
+                .getPointsToSet().forEach(x -> {
+                    if (manager.isTaint(x.getObject())) {
+                        solver.addToWorkList(recv, PointsToSetFactory.make(csManager.getCSObj(emptyContext,
+                            manager.makeTaint(manager.getSourceCall(x.getObject()), transfer.type()))));
+                    }
+                });
+        }
+    }
+
+    private void argToResult(Context context, Invoke invoke, TaintTransfer transfer) {
+        if (transfer.to() == TaintTransfer.RESULT && transfer.from() >= 0) {
+            csManager.getCSVar(context, invoke.getInvokeExp().getArg(transfer.from()))
+                .getPointsToSet().forEach(x -> {
+                    if (manager.isTaint(x.getObject())) {
+                        solver.addToWorkList(csManager.getCSVar(context, invoke.getLValue()),
+                            PointsToSetFactory.make(csManager.getCSObj(emptyContext, manager.makeTaint(
+                                manager.getSourceCall(x.getObject()), transfer.type())))
+                        );
+                    }
+                });
+        }
     }
 
     private Set<TaintFlow> collectTaintFlows() {

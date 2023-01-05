@@ -47,6 +47,7 @@ import pascal.taie.analysis.pta.plugin.taint.TaintAnalysiss;
 import pascal.taie.analysis.pta.pts.PointsToSet;
 import pascal.taie.analysis.pta.pts.PointsToSetFactory;
 import pascal.taie.config.AnalysisOptions;
+import pascal.taie.ir.exp.InvokeInstanceExp;
 import pascal.taie.ir.stmt.Copy;
 import pascal.taie.ir.stmt.Invoke;
 import pascal.taie.ir.stmt.LoadField;
@@ -256,6 +257,28 @@ public class Solver {
                 var v = csVar.getVar();
                 var context = csVar.getContext();
                 for (var to: delta) {
+                    if (taintAnalysis.isTaintObject(to.getObject())) {
+                        // taint is transferred to current variable
+                        // we need to collect its appearance in arguments
+                        reachableStmts.stream()
+                                .filter(x -> x instanceof Invoke invoke &&
+                                    invoke.getInvokeExp().getArgs().stream().anyMatch(a ->
+                                            csManager.getCSVar(context, a).getPointsToSet().contains(to)
+                                    ))
+                                .map(x -> (Invoke)x)
+                                .forEach(invoke -> {
+                                    if (invoke.getInvokeExp() instanceof InvokeInstanceExp instanceExp) {
+                                        taintAnalysis.taintTransfer(
+                                                context,
+                                                invoke,
+                                                csManager.getCSVar(context, instanceExp.getBase()),
+                                                invoke.getMethodRef().resolve()
+                                        );
+                                    } else if (invoke.isStatic()) {
+                                        taintAnalysis.taintTransfer(context, invoke, invoke.getMethodRef().resolve());
+                                    }
+                                });
+                    }
                     for (var storeField: v.getStoreFields()) {
                         if (reachableStmts.contains(storeField)) {
                             addPFGEdge(csManager.getCSVar(context, storeField.getRValue()),
