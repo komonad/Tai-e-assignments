@@ -44,6 +44,7 @@ import pascal.taie.ir.stmt.Invoke;
 import pascal.taie.ir.stmt.LoadArray;
 import pascal.taie.ir.stmt.LoadField;
 import pascal.taie.ir.stmt.Stmt;
+import pascal.taie.ir.stmt.StoreArray;
 import pascal.taie.ir.stmt.StoreField;
 import pascal.taie.language.classes.JField;
 import pascal.taie.language.classes.JMethod;
@@ -60,7 +61,7 @@ public class InterConstantPropagation extends
 
     private final HashMap<JField, Value> staticField;
     private final Map<Var, Map<JField, Value>> instanceFields;
-    private final Map<Var, Map<Integer, Value>> arrayAccess;
+    private final Map<Var, Map<Value, Value>> arrayAccess;
 
     private PointerAnalysisResult pta;
 
@@ -113,7 +114,7 @@ public class InterConstantPropagation extends
             ConstantPropagation.canHoldInt(loadField.getLValue()) &&
             loadField.getRValue() instanceof InstanceFieldAccess ifa) {
             var field = ifa.getFieldRef().resolve();
-            var pointsTo = pta.getPointsToSet(ifa.getBase(), ifa.getFieldRef().resolve());
+            var pointsTo = pta.getPointsToSet(ifa.getBase());
             var value = pta.getVars().stream()
                 .filter(v -> pta.getPointsToSet(v).stream().anyMatch(pointsTo::contains))
                 .map(v -> instanceFields.computeIfAbsent(v, k -> new HashMap<>())
@@ -141,43 +142,63 @@ public class InterConstantPropagation extends
             var idx = ConstantPropagation.evaluate(loadArray.getRValue().getIndex(), in);
             var value = pta.getVars().stream()
                 .filter(v -> pta.getPointsToSet(v).stream().anyMatch(pointsTo::contains))
-                .flatMap(v -> v.getStoreArrays().stream())
+                .flatMap(v -> arrayAccess.getOrDefault(v, new HashMap<>()).entrySet().stream())
                 .filter(v -> {
-                    var targetIdx = ConstantPropagation.evaluate(v.getLValue().getIndex(), in);
+                    var targetIdx = v.getKey();
                     if (targetIdx.isUndef() || idx.isUndef()) return false;
                     if (targetIdx.isNAC() || idx.isNAC()) return true;
                     return targetIdx.getConstant() == idx.getConstant();
                 })
-                .map(v -> ConstantPropagation.evaluate(v.getRValue(), in))
+                .map(Map.Entry::getValue)
                 .reduce(Value.getUndef(), cp::meetValue);
             var oldOut = out.copy();
             out.copyFrom(in);
             out.update(loadArray.getLValue(), value);
             return !out.equals(oldOut);
-        } else if (stmt instanceof StoreField storeField && storeField.isStatic()) {
+        } else if (stmt instanceof StoreField storeField && storeField.isStatic() &&
+            ConstantPropagation.canHoldInt(storeField.getRValue())) {
             var field = storeField.getFieldRef().resolve();
-            var old = staticField.computeIfAbsent(field, k -> Value.getUndef());
+            var oldValue = staticField.computeIfAbsent(field, k -> Value.getUndef());
             var value = ConstantPropagation.evaluate(storeField.getRValue(), in);
-            var newValue = cp.meetValue(value, old);
+            var newValue = cp.meetValue(value, oldValue);
             staticField.put(field, newValue);
             var oldOut = out.copy();
             out.copyFrom(in);
-            return !old.equals(newValue) || !oldOut.equals(out);
+            if (!oldValue.equals(newValue)) {
+                solver.addAll();
+            }
+            return !oldOut.equals(out);
         } else if (stmt instanceof StoreField storeField &&
-            storeField.getFieldAccess() instanceof InstanceFieldAccess ifa) {
+            storeField.getFieldAccess() instanceof InstanceFieldAccess ifa &&
+            ConstantPropagation.canHoldInt(storeField.getRValue())) {
             var obj = ifa.getBase();
             var field = ifa.getFieldRef().resolve();
             var varMap = instanceFields.computeIfAbsent(obj, k -> new HashMap<>());
-            var oldValue = varMap.get(field);
-            if (oldValue == null) {
-                oldValue = Value.getUndef();
-            }
+            var oldValue = varMap.getOrDefault(field, Value.getUndef());
             var value = ConstantPropagation.evaluate(storeField.getRValue(), in);
             var newValue = cp.meetValue(value, oldValue);
             varMap.put(field, newValue);
             var oldOut = out.copy();
             out.copyFrom(in);
-            return !oldValue.equals(newValue) || !oldOut.equals(out);
+            if (!oldValue.equals(newValue)) {
+                solver.addAll();
+            }
+            return !oldOut.equals(out);
+        } else if (stmt instanceof StoreArray storeArray &&
+            ConstantPropagation.canHoldInt(storeArray.getRValue())) {
+            var obj = storeArray.getLValue().getBase();
+            var idx = ConstantPropagation.evaluate(storeArray.getLValue().getIndex(), in);
+            var arrayMap = arrayAccess.computeIfAbsent(obj, k -> new HashMap<>());
+            var oldValue = arrayMap.getOrDefault(idx, Value.getUndef());
+            var value = ConstantPropagation.evaluate(storeArray.getRValue(), in);
+            var newValue = cp.meetValue(value, oldValue);
+            arrayMap.put(idx, newValue);
+            var oldOut = out.copy();
+            out.copyFrom(in);
+            if (!oldValue.equals(newValue)) {
+                solver.addAll();
+            }
+            return !oldOut.equals(out);
         }
         return cp.transferNode(stmt, in, out);
     }

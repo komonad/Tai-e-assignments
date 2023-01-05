@@ -73,6 +73,12 @@ class InterSolver<Method, Node, Fact> {
         });
     }
 
+    public void addAll() {
+        icfg.forEach(x -> {
+            if (!workList.contains(x)) workList.add(x);
+        });
+    }
+
     private void doSolve() {
         workList = new LinkedList<>();
         icfg.forEach(workList::add);
