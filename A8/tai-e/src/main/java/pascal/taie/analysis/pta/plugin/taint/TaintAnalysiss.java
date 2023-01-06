@@ -86,7 +86,8 @@ public class TaintAnalysiss {
     }
 
     public Stream<CSObj> getSourcesOf(JMethod method, Invoke invoke) {
-        return config.getSources().stream().filter(x -> x.method().equals(method)).map(Source::type)
+        return config.getSources().stream()
+            .filter(x -> x.method().equals(method)).map(Source::type)
             .map(x -> manager.makeTaint(invoke, x))
             .map(x -> solver.getCSManager().getCSObj(
                 emptyContext,
@@ -132,8 +133,11 @@ public class TaintAnalysiss {
             csManager.getCSVar(context, invoke.getInvokeExp().getArg(transfer.from()))
                 .getPointsToSet().forEach(x -> {
                     if (manager.isTaint(x.getObject())) {
-                        solver.addToWorkList(recv, PointsToSetFactory.make(csManager.getCSObj(emptyContext,
-                            manager.makeTaint(manager.getSourceCall(x.getObject()), transfer.type()))));
+                        solver.addToWorkList(recv, PointsToSetFactory.make(
+                            csManager.getCSObj(
+                                emptyContext,
+                                manager.makeTaint(manager.getSourceCall(x.getObject()), transfer.type()))
+                        ));
                     }
                 });
         }
